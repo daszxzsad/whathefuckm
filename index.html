@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>익명 게시판</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f7fa; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .header { text-align: center; padding: 20px; background: white; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; background: white; padding: 10px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .tab { flex: 1; padding: 12px; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; background: #f5f7fa; color: #7f8c8d; transition: all 0.3s; }
+        .tab.active { background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%); color: white; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        input, textarea, select { width: 100%; padding: 12px; border: 2px solid #e8e8e8; border-radius: 8px; font-size: 1rem; margin-bottom: 10px; font-family: inherit; }
+        textarea { min-height: 100px; resize: vertical; }
+        .btn { width: 100%; padding: 14px; background: #4a90e2; color: white; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; transition: all 0.3s; }
+        .btn:hover { background: #357abd; transform: translateY(-2px); }
+        .btn:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+        .btn-small { width: auto; padding: 8px 15px; font-size: 0.9rem; }
+        .post { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 15px; }
+        .post-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.9rem; color: #666; }
+        .post-footer { display: flex; gap: 10px; margin-top: 15px; padding-top: 15px; border-top: 1px solid #f0f0f0; }
+        .reaction { padding: 8px 12px; background: #f8f9fa; border: 1px solid #e8e8e8; border-radius: 20px; cursor: pointer; font-size: 0.9rem; transition: all 0.3s; }
+        .reaction:hover { background: #e8ecef; transform: scale(1.05); }
+        .comments { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 15px; }
+        .comment { background: white; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
+        .comment-header { font-size: 0.85rem; color: #666; margin-bottom: 5px; }
+        .comment-input { display: flex; gap: 10px; margin-top: 10px; }
+        .iframe-container { width: 100%; height: 80vh; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .iframe-container iframe { width: 100%; height: 100%; border: none; }
+        .dcinside-info { background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #ffc107; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        
+        const firebaseConfig = {
+            apiKey: "AIzaSyDh3FsyWVZqy8wGExv-IlAglJ0DERuW_T8",
+            authDomain: "ccccc-74256.firebaseapp.com",
+            databaseURL: "https://ccccc-74256-default-rtdb.firebaseio.com",
+            projectId: "ccccc-74256"
+        };
+        
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        
+        function App() {
+            const [tab, setTab] = useState('board');
+            const [posts, setPosts] = useState([]);
+            const [nickname, setNickname] = useState('');
+            const [content, setContent] = useState('');
+            const [loading, setLoading] = useState(true);
+            const [openComments, setOpenComments] = useState({});
+            const [commentInputs, setCommentInputs] = useState({});
+            const [commentNicknames, setCommentNicknames] = useState({});
+            
+            useEffect(() => {
+                const ref = db.ref('posts');
+                ref.on('value', (snap) => {
+                    const data = snap.val();
+                    if (data) {
+                        const arr = Object.keys(data).map(k => ({id: k, ...data[k]})).sort((a,b) => b.timestamp - a.timestamp);
+                        setPosts(arr);
+                    }
+                    setLoading(false);
+                });
+                return () => ref.off();
+            }, []);
+            
+            const submit = () => {
+                if (!content.trim()) return;
+                db.ref('posts').push({ 
+                    nickname: nickname.trim() || '익명',
+                    content: content.trim(), 
+                    timestamp: Date.now(), 
+                    reactions: {hug:0,cheer:0}, 
+                    comments: {} 
+                });
+                setNickname('');
+                setContent('');
+            };
+            
+            const react = (id, type) => {
+                const post = posts.find(p => p.id === id);
+                db.ref(`posts/${id}/reactions/${type}`).set((post.reactions?.[type] || 0) + 1);
+            };
+            
+            const toggleComments = (id) => {
+                setOpenComments({...openComments, [id]: !openComments[id]});
+            };
+            
+            const addComment = (postId) => {
+                const text = commentInputs[postId];
+                if (!text?.trim()) return;
+                
+                // localStorage에서 이 게시글에 대한 내 익명 번호 가져오기
+                const myAnonymousIds = JSON.parse(localStorage.getItem('myAnonymousIds') || '{}');
+                let myNumber = myAnonymousIds[postId];
+                
+                // 이 게시글에 처음 댓글 다는 경우
+                if (!myNumber) {
+                    // 현재 이 게시글의 최대 익명 번호 찾기
+                    let maxNumber = 0;
+                    if (posts.find(p => p.id === postId)?.nickname === '익명') {
+                        maxNumber = 1; // 게시글 작성자가 익명1
+                    }
+                    
+                    // 기존 댓글들에서 최대 번호 찾기
+                    const post = posts.find(p => p.id === postId);
+                    if (post?.comments) {
+                        Object.values(post.comments).forEach(c => {
+                            if (c.nickname?.startsWith('익명')) {
+                                const num = parseInt(c.nickname.replace('익명', ''));
+                                if (!isNaN(num) && num > maxNumber) {
+                                    maxNumber = num;
+                                }
+                            }
+                        });
+                    }
+                    
+                    myNumber = maxNumber + 1;
+                    myAnonymousIds[postId] = myNumber;
+                    localStorage.setItem('myAnonymousIds', JSON.stringify(myAnonymousIds));
+                }
+                
+                const nickname = commentNicknames[postId]?.trim() || `익명${myNumber}`;
+                
+                db.ref(`posts/${postId}/comments`).push({ 
+                    nickname: nickname,
+                    content: text.trim(), 
+                    timestamp: Date.now() 
+                });
+                setCommentInputs({...commentInputs, [postId]: ''});
+                setCommentNicknames({...commentNicknames, [postId]: ''});
+            };
+            
+            return (
+                <div className="container">
+                    <div className="header">
+                        <h1>📋 익명 게시판</h1>
+                    </div>
+                    
+                    <div className="tabs">
+                        <button className={`tab ${tab==='board'?'active':''}`} onClick={()=>setTab('board')}>📝 게시판</button>
+                        <button className={`tab ${tab==='single'?'active':''}`} onClick={()=>setTab('single')}>🌍 싱글벙글</button>
+                        <button className={`tab ${tab==='inbang'?'active':''}`} onClick={()=>setTab('inbang')}>💫 인방갤</button>
+                        <button className={`tab ${tab==='ygosu'?'active':''}`} onClick={()=>setTab('ygosu')}>🎮 와이고수</button>
+                        <button className={`tab ${tab==='fmkorea'?'active':''}`} onClick={()=>setTab('fmkorea')}>⚽ 펨코</button>
+                        <button className={`tab ${tab==='fow'?'active':''}`} onClick={()=>setTab('fow')}>🎯 포우</button>
+                    </div>
+                    
+                    {tab === 'board' ? (
+                        <>
+                            <div className="card">
+                                <h3>✍️ 글 작성</h3>
+                                <input 
+                                    type="text"
+                                    value={nickname} 
+                                    onChange={e=>setNickname(e.target.value)} 
+                                    placeholder="닉네임 (선택, 비우면 '익명')" 
+                                    maxLength={20}
+                                    style={{marginBottom:'10px'}}
+                                />
+                                <textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="내용 입력..." maxLength={500} />
+                                <div style={{textAlign:'right',fontSize:'0.9rem',color:'#666',marginBottom:'10px'}}>{content.length}/500</div>
+                                <button className="btn" onClick={submit} disabled={!content.trim()}>게시하기</button>
+                            </div>
+                            <h3 style={{marginBottom:'15px'}}>📝 게시글 ({posts.length})</h3>
+                            {loading ? <div className="card">로딩중...</div> : posts.length === 0 ? <div className="card">게시글이 없습니다.</div> : posts.map(p => {
+                                const getAnonymousNumber = () => {
+                                    if (p.nickname === '익명') return '익명1';
+                                    return p.nickname || '익명1';
+                                };
+                                
+                                return (
+                                <div key={p.id} className="post">
+                                    <div className="post-header">
+                                        <strong>{getAnonymousNumber()}</strong>
+                                        <span>{new Date(p.timestamp).toLocaleString('ko-KR')}</span>
+                                    </div>
+                                    <div style={{lineHeight:'1.6'}}>{p.content}</div>
+                                    <div className="post-footer">
+                                        <span className="reaction" onClick={()=>react(p.id,'hug')}>🤗 {p.reactions?.hug || 0}</span>
+                                        <span className="reaction" onClick={()=>react(p.id,'cheer')}>💪 {p.reactions?.cheer || 0}</span>
+                                        <span className="reaction" onClick={()=>toggleComments(p.id)}>💬 댓글 {p.comments ? Object.keys(p.comments).length : 0}</span>
+                                    </div>
+                                    {openComments[p.id] && (
+                                        <div className="comments">
+                                            {p.comments && (() => {
+                                                const anonymousCounter = { count: p.nickname === '익명' ? 2 : 1 };
+                                                
+                                                return Object.keys(p.comments).map(cid => {
+                                                    const c = p.comments[cid];
+                                                    const isAuthor = c.nickname === p.nickname && c.nickname !== '익명';
+                                                    
+                                                    let displayName = c.nickname || '익명';
+                                                    let showAuthorBadge = false;
+                                                    
+                                                    if (displayName === '익명') {
+                                                        if (p.nickname === '익명') {
+                                                            displayName = `익명${anonymousCounter.count}`;
+                                                            anonymousCounter.count++;
+                                                        } else {
+                                                            displayName = `익명${anonymousCounter.count}`;
+                                                            anonymousCounter.count++;
+                                                        }
+                                                    } else {
+                                                        showAuthorBadge = isAuthor;
+                                                    }
+                                                    
+                                                    return (
+                                                        <div key={cid} className="comment">
+                                                            <div className="comment-header">
+                                                                <strong>{displayName}</strong>
+                                                                {showAuthorBadge && (
+                                                                    <span style={{
+                                                                        marginLeft: '6px',
+                                                                        padding: '2px 8px',
+                                                                        background: 'linear-gradient(135deg, #4a90e2 0%, #357abd 100%)',
+                                                                        color: 'white',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '0.75rem',
+                                                                        fontWeight: 'bold'
+                                                                    }}>
+                                                                        글쓴이
+                                                                    </span>
+                                                                )}
+                                                                {' · '}{new Date(c.timestamp).toLocaleString('ko-KR')}
+                                                            </div>
+                                                            <div>{c.content}</div>
+                                                        </div>
+                                                    );
+                                                });
+                                            })()}
+                                            <div style={{marginTop:'10px'}}>
+                                                <input 
+                                                    value={commentNicknames[p.id] || (() => {
+                                                        const myIds = JSON.parse(localStorage.getItem('myAnonymousIds') || '{}');
+                                                        return myIds[p.id] ? `익명${myIds[p.id]}` : '';
+                                                    })()}
+                                                    readOnly
+                                                    placeholder={(() => {
+                                                        const myIds = JSON.parse(localStorage.getItem('myAnonymousIds') || '{}');
+                                                        return myIds[p.id] ? `익명${myIds[p.id]} (자동배정)` : '익명 번호 자동배정';
+                                                    })()}
+                                                    maxLength={20}
+                                                    style={{
+                                                        marginBottom:'8px',
+                                                        background: '#f8f9fa',
+                                                        cursor: 'not-allowed',
+                                                        color: '#495057'
+                                                    }}
+                                                />
+                                                <div className="comment-input">
+                                                    <input 
+                                                        value={commentInputs[p.id] || ''} 
+                                                        onChange={e=>setCommentInputs({...commentInputs, [p.id]: e.target.value})}
+                                                        onKeyPress={e=>e.key==='Enter'&&addComment(p.id)}
+                                                        placeholder="댓글 입력..."
+                                                        style={{flex:1}}
+                                                    />
+                                                    <button className="btn btn-small" onClick={()=>addComment(p.id)}>작성</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                                );
+                            })}
+                        </>
+                    ) : tab === 'single' ? (
+                        <div>
+                            <div className="dcinside-info">
+                                <h3 style={{marginBottom:'10px'}}>🌍 싱글벙글 지구촌 개념글</h3>
+                                <p style={{fontSize:'0.9rem',lineHeight:'1.6',color:'#856404'}}>
+                                    ⚠️ 보안 정책으로 인해 직접 embed가 불가능할 수 있습니다.<br/>
+                                    iframe이 표시되지 않으면 아래 버튼으로 새 창에서 열어주세요!
+                                </p>
+                            </div>
+                            
+                            <div className="card" style={{textAlign:'center',padding:'20px'}}>
+                                <button 
+                                    className="btn" 
+                                    onClick={()=>window.open('https://gall.dcinside.com/mgallery/board/lists/?id=singlebungle1472&exception_mode=recommend', '_blank')}
+                                    style={{maxWidth:'400px',margin:'0 auto 20px'}}
+                                >
+                                    🔗 새 창에서 싱글벙글 개념글 보기
+                                </button>
+                            </div>
+                            
+                            <div className="iframe-container">
+                                <iframe 
+                                    src="https://gall.dcinside.com/mgallery/board/lists/?id=singlebungle1472&exception_mode=recommend"
+                                    title="디시인사이드 싱글벙글 개념글"
+                                    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-popups-to-escape-sandbox allow-top-navigation"
+                                    allow="autoplay; fullscreen; picture-in-picture"
+                                />
+                            </div>
+                        </div>
+                    ) : tab === 'inbang' ? (
+                        <div>
+                            <div className="dcinside-info">
+                                <h3 style={{marginBottom:'10px'}}>💫 인터넷방송 개념글</h3>
+                                <p style={{fontSize:'0.9rem',lineHeight:'1.6',color:'#856404'}}>
+                                    ⚠️ 보안 정책으로 인해 직접 embed가 불가능할 수 있습니다.<br/>
+                                    iframe이 표시되지 않으면 아래 버튼으로 새 창에서 열어주세요!
+                                </p>
+                            </div>
+                            
+                            <div className="card" style={{textAlign:'center',padding:'20px'}}>
+                                <button 
+                                    className="btn" 
+                                    onClick={()=>window.open('https://gall.dcinside.com/mini/board/lists/?id=soopsosopbj&exception_mode=recommend', '_blank')}
+                                    style={{maxWidth:'400px',margin:'0 auto 20px'}}
+                                >
+                                    🔗 새 창에서 인방갤 개념글 보기
+                                </button>
+                            </div>
+                            
+                            <div className="iframe-container">
+                                <iframe 
+                                    src="https://gall.dcinside.com/mini/board/lists/?id=soopsosopbj&exception_mode=recommend"
+                                    title="디시인사이드 인방갤 개념글"
+                                    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-popups-to-escape-sandbox allow-top-navigation"
+                                    allow="autoplay; fullscreen; picture-in-picture"
+                                />
+                            </div>
+                        </div>
+                    ) : tab === 'ygosu' ? (
+                        <div>
+                            <div className="dcinside-info">
+                                <h3 style={{marginBottom:'10px'}}>🎮 와이고수</h3>
+                                <p style={{fontSize:'0.9rem',lineHeight:'1.6',color:'#856404'}}>
+                                    ⚠️ 보안 정책으로 인해 직접 embed가 불가능할 수 있습니다.<br/>
+                                    iframe이 표시되지 않으면 아래 버튼으로 새 창에서 열어주세요!
+                                </p>
+                            </div>
+                            
+                            <div className="card" style={{textAlign:'center',padding:'20px'}}>
+                                <button 
+                                    className="btn" 
+                                    onClick={()=>window.open('https://ygosu.com/', '_blank')}
+                                    style={{maxWidth:'400px',margin:'0 auto 20px'}}
+                                >
+                                    🔗 새 창에서 와이고수 보기
+                                </button>
+                            </div>
+                            
+                            <div className="iframe-container">
+                                <iframe 
+                                    src="https://ygosu.com/"
+                                    title="와이고수"
+                                    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-popups-to-escape-sandbox allow-top-navigation"
+                                    allow="autoplay; fullscreen; picture-in-picture"
+                                />
+                            </div>
+                        </div>
+                    ) : tab === 'fmkorea' ? (
+                        <div>
+                            <div className="dcinside-info">
+                                <h3 style={{marginBottom:'10px'}}>⚽ 펨코 (에펨코리아)</h3>
+                                <p style={{fontSize:'0.9rem',lineHeight:'1.6',color:'#856404'}}>
+                                    ⚠️ 보안 정책으로 인해 직접 embed가 불가능할 수 있습니다.<br/>
+                                    iframe이 표시되지 않으면 아래 버튼으로 새 창에서 열어주세요!
+                                </p>
+                            </div>
+                            
+                            <div className="card" style={{textAlign:'center',padding:'20px'}}>
+                                <button 
+                                    className="btn" 
+                                    onClick={()=>window.open('https://www.fmkorea.com/', '_blank')}
+                                    style={{maxWidth:'400px',margin:'0 auto 20px'}}
+                                >
+                                    🔗 새 창에서 펨코 보기
+                                </button>
+                            </div>
+                            
+                            <div className="iframe-container">
+                                <iframe 
+                                    src="https://www.fmkorea.com/"
+                                    title="에펨코리아"
+                                    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-popups-to-escape-sandbox allow-top-navigation"
+                                    allow="autoplay; fullscreen; picture-in-picture"
+                                />
+                            </div>
+                        </div>
+                    ) : tab === 'fow' ? (
+                        <div>
+                            <div className="dcinside-info">
+                                <h3 style={{marginBottom:'10px'}}>🎯 포우 (롤 전적검색)</h3>
+                                <p style={{fontSize:'0.9rem',lineHeight:'1.6',color:'#856404'}}>
+                                    ⚠️ 보안 정책으로 인해 직접 embed가 불가능할 수 있습니다.<br/>
+                                    iframe이 표시되지 않으면 아래 버튼으로 새 창에서 열어주세요!
+                                </p>
+                            </div>
+                            
+                            <div className="card" style={{textAlign:'center',padding:'20px'}}>
+                                <button 
+                                    className="btn" 
+                                    onClick={()=>window.open('https://www.fow.lol/?hl=ko_KR', '_blank')}
+                                    style={{maxWidth:'400px',margin:'0 auto 20px'}}
+                                >
+                                    🔗 새 창에서 포우 보기
+                                </button>
+                            </div>
+                            
+                            <div className="iframe-container">
+                                <iframe 
+                                    src="https://www.fow.lol/?hl=ko_KR"
+                                    title="포우 롤 전적검색"
+                                    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-modals allow-popups-to-escape-sandbox allow-top-navigation"
+                                    allow="autoplay; fullscreen; picture-in-picture"
+                                />
+                            </div>
+                        </div>
+                    ) : null}
+                </div>
+            );
+        }
+        
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
