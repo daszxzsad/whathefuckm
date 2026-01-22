@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>익명 게시판</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f7fa; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { text-align: center; padding: 20px; background: white; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; background: white; padding: 10px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); flex-wrap: wrap; }
+        .tab { flex: 1; min-width: 100px; padding: 12px; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; background: #f5f7fa; color: #7f8c8d; transition: all 0.3s; }
+        .tab.active { background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%); color: white; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        input, textarea { width: 100%; padding: 12px; border: 2px solid #e8e8e8; border-radius: 8px; font-size: 1rem; margin-bottom: 10px; font-family: inherit; }
+        textarea { min-height: 100px; resize: vertical; }
+        .btn { width: 100%; padding: 14px; background: #4a90e2; color: white; border: none; border-radius: 8px; font-size: 1rem; font-weight: bold; cursor: pointer; transition: all 0.3s; }
+        .btn:hover { background: #357abd; transform: translateY(-2px); }
+        .btn:disabled { background: #ccc; cursor: not-allowed; transform: none; }
+        .post { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 15px; }
+        .post-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.9rem; color: #666; }
+        .chat-container { height: 500px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; padding: 15px; margin-bottom: 15px; }
+        .chat-message { background: white; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
+        .chat-header { font-weight: bold; color: #4a90e2; margin-bottom: 5px; font-size: 0.9rem; }
+        .pvp-result { padding: 30px; border-radius: 12px; text-align: center; margin-bottom: 20px; color: white; animation: fadeIn 0.5s; }
+        .pvp-result.win { background: linear-gradient(135deg, #4caf50 0%, #66bb6a 100%); }
+        .pvp-result.lose { background: linear-gradient(135deg, #f44336 0%, #ef5350 100%); }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Firebase 초기화
+        const firebaseConfig = {
+            apiKey: "AIzaSyC1sl588uhFIDvNdkp7xF-ERCnC_plUslw",
+            authDomain: "anonymous-board-4a5a2.firebaseapp.com",
+            databaseURL: "https://anonymous-board-4a5a2-default-rtdb.firebaseio.com",
+            projectId: "anonymous-board-4a5a2",
+            storageBucket: "anonymous-board-4a5a2.firebasestorage.app",
+            messagingSenderId: "1088281214398",
+            appId: "1:1088281214398:web:51e0fcea4dc66783bc7399"
+        };
+        
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.database();
+
+        function App() {
+            const [tab, setTab] = useState('board');
+            
+            // 게시판
+            const [posts, setPosts] = useState([]);
+            const [postTitle, setPostTitle] = useState('');
+            const [postContent, setPostContent] = useState('');
+            
+            // 채팅
+            const [messages, setMessages] = useState([]);
+            const [chatMsg, setChatMsg] = useState('');
+            const [chatNick, setChatNick] = useState('');
+            
+            // 농장
+            const [farmUser, setFarmUser] = useState(null);
+            const [farmNick, setFarmNick] = useState('');
+            const [farmPass, setFarmPass] = useState('');
+            const [isLogin, setIsLogin] = useState(true);
+            const [allUsers, setAllUsers] = useState([]);
+            const [timer, setTimer] = useState('');
+            const [pvpTarget, setPvpTarget] = useState('');
+            const [pvpAmount, setPvpAmount] = useState('');
+            const [pvpReqs, setPvpReqs] = useState([]);
+            const [pvpResult, setPvpResult] = useState(null);
+
+            // 게시판 데이터 로드
+            useEffect(() => {
+                const ref = db.ref('posts').limitToLast(50);
+                ref.on('value', snap => {
+                    const data = snap.val();
+                    if (data) {
+                        const arr = Object.keys(data).map(k => ({id: k, ...data[k]}))
+                            .sort((a,b) => b.timestamp - a.timestamp);
+                        setPosts(arr);
+                    } else {
+                        setPosts([]);
+                    }
+                });
+                return () => ref.off();
+            }, []);
+
+            // 채팅 데이터 로드
+            useEffect(() => {
+                const ref = db.ref('chatMessages').limitToLast(100);
+                ref.on('value', snap => {
+                    const data = snap.val();
+                    if (data) {
+                        const arr = Object.keys(data).map(k => ({id: k, ...data[k]}))
+                            .sort((a,b) => a.timestamp - b.timestamp);
+                        setMessages(arr);
+                    } else {
+                        setMessages([]);
+                    }
+                });
+                return () => ref.off();
+            }, []);
+
+            // 채팅 닉네임 설정
+            useEffect(() => {
+                let nick = localStorage.getItem('chatRandomNickname');
+                if (!nick) {
+                    const names = ['을웅', '명진', '민수', '충연', '민기', '민호', '신우', '대웅'];
+                    nick = names[Math.floor(Math.random() * names.length)];
+                    localStorage.setItem('chatRandomNickname', nick);
+                }
+                setChatNick(nick);
+            }, []);
+
+            // 농장 유저 로드
+            useEffect(() => {
+                const ref = db.ref('farmUsers');
+                ref.on('value', snap => {
+                    const data = snap.val();
+                    if (data) {
+                        const arr = Object.keys(data).map(k => ({id: k, ...data[k]}))
+                            .sort((a,b) => b.length - a.length);
+                        setAllUsers(arr);
+                        
+                        const token = localStorage.getItem('farmToken');
+                        if (token) {
+                            const me = arr.find(u => u.id === token);
+                            if (me) {
+                                setFarmUser(me);
+                            }
+                        }
+                    } else {
+                        setAllUsers([]);
+                    }
+                });
+                return () => ref.off();
+            }, []);
+
+            // PVP 요청 로드
+            useEffect(() => {
+                const ref = db.ref('pvpRequests');
+                ref.on('value', snap => {
+                    const data = snap.val();
+                    const token = localStorage.getItem('farmToken');
+                    if (data && token) {
+                        const arr = Object.keys(data).map(k => ({id: k, ...data[k]}))
+                            .filter(r => r.status === 'pending' && (r.toId === token || r.fromId === token));
+                        setPvpReqs(arr);
+                    } else {
+                        setPvpReqs([]);
+                    }
+                });
+                return () => ref.off();
+            }, []);
+
+            // 타이머 업데이트
+            useEffect(() => {
+                const update = () => {
+                    if (!farmUser || !farmUser.lastCheckIn) {
+                        setTimer('출석 가능!');
+                        return;
+                    }
+                    
+                    const now = Date.now();
+                    const diff = now - farmUser.lastCheckIn;
+                    const cooldown = 24 * 60 * 60 * 1000;
+                    
+                    if (diff >= cooldown) {
+                        setTimer('출석 가능!');
+                    } else {
+                        const left = cooldown - diff;
+                        const h = Math.floor(left / 3600000);
+                        const m = Math.floor((left % 3600000) / 60000);
+                        const s = Math.floor((left % 60000) / 1000);
+                        setTimer(`${h}시간 ${m}분 ${s}초`);
+                    }
+                };
+                
+                update();
+                const iv = setInterval(update, 1000);
+                return () => clearInterval(iv);
+            }, [farmUser]);
+
+            // 게시글 작성
+            const writePost = () => {
+                if (!postTitle.trim() || !postContent.trim()) return;
+                
+                db.ref('posts').push({
+                    title: postTitle.trim(),
+                    content: postContent.trim(),
+                    timestamp: Date.now()
+                });
+                
+                setPostTitle('');
+                setPostContent('');
+            };
+
+            // 채팅 전송
+            const sendChat = () => {
+                if (!chatMsg.trim()) return;
+                
+                db.ref('chatMessages').push({
+                    nickname: chatNick,
+                    message: chatMsg.trim(),
+                    timestamp: Date.now()
+                });
+                
+                setChatMsg('');
+            };
+
+            // 회원가입
+            const register = () => {
+                if (!farmNick.trim() || !farmPass.trim()) {
+                    alert('닉네임과 비밀번호를 입력하세요!');
+                    return;
+                }
+                
+                if (farmPass.length < 4) {
+                    alert('비밀번호는 4자 이상!');
+                    return;
+                }
+                
+                const exists = allUsers.find(u => u.nickname === farmNick.trim());
+                if (exists) {
+                    alert('이미 사용 중인 닉네임!');
+                    return;
+                }
+                
+                const uid = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                
+                db.ref(`farmUsers/${uid}`).set({
+                    nickname: farmNick.trim(),
+                    password: btoa(farmPass),
+                    length: 10,
+                    lastCheckIn: 0,
+                    createdAt: Date.now()
+                }).then(() => {
+                    localStorage.setItem('farmToken', uid);
+                    setFarmNick('');
+                    setFarmPass('');
+                    alert('회원가입 완료! 🎉');
+                    
+                    // 즉시 로그인 상태로
+                    setTimeout(() => {
+                        const newUser = {
+                            id: uid,
+                            nickname: farmNick.trim(),
+                            length: 10,
+                            lastCheckIn: 0
+                        };
+                        setFarmUser(newUser);
+                    }, 500);
+                });
+            };
+
+            // 로그인
+            const login = () => {
+                if (!farmNick.trim() || !farmPass.trim()) {
+                    alert('닉네임과 비밀번호를 입력하세요!');
+                    return;
+                }
+                
+                const user = allUsers.find(u => u.nickname === farmNick.trim());
+                
+                if (!user) {
+                    alert('존재하지 않는 계정!');
+                    return;
+                }
+                
+                if (user.password !== btoa(farmPass)) {
+                    alert('비밀번호가 틀렸습니다!');
+                    return;
+                }
+                
+                localStorage.setItem('farmToken', user.id);
+                setFarmUser(user);
+                setFarmNick('');
+                setFarmPass('');
+                alert('로그인 성공! 🌶️');
+            };
+
+            // 로그아웃
+            const logout = () => {
+                localStorage.removeItem('farmToken');
+                setFarmUser(null);
+                alert('로그아웃!');
+            };
+
+            // 출석체크
+            const checkIn = () => {
+                if (!farmUser) return;
+                
+                const now = Date.now();
+                
+                if (farmUser.lastCheckIn && (now - farmUser.lastCheckIn) < 24 * 60 * 60 * 1000) {
+                    const left = 24 * 60 * 60 * 1000 - (now - farmUser.lastCheckIn);
+                    const h = Math.floor(left / 3600000);
+                    const m = Math.floor((left % 3600000) / 60000);
+                    alert(`아직 출석 불가! ${h}시간 ${m}분 후 다시!`);
+                    return;
+                }
+                
+                const growth = Math.floor(Math.random() * 100) + 1;
+                const newLen = (farmUser.length || 10) + growth;
+                
+                db.ref(`farmUsers/${farmUser.id}`).update({
+                    length: newLen,
+                    lastCheckIn: now
+                });
+                
+                db.ref('chatMessages').push({
+                    nickname: '🌶️ 농장 시스템',
+                    message: `${farmUser.nickname}님이 출석체크로 ${growth}cm 성장! (현재: ${newLen}cm)`,
+                    timestamp: Date.now()
+                });
+                
+                alert(`🌶️ ${growth}cm 성장! (현재: ${newLen}cm)`);
+            };
+
+            // PVP 신청
+            const sendPvp = () => {
+                if (!pvpTarget.trim() || !pvpAmount) return;
+                if (!farmUser) return;
+                
+                const target = allUsers.find(u => u.nickname === pvpTarget.trim());
+                if (!target) {
+                    alert('존재하지 않는 사용자!');
+                    return;
+                }
+                
+                if (target.id === farmUser.id) {
+                    alert('자신에게는 불가!');
+                    return;
+                }
+                
+                const amt = parseInt(pvpAmount);
+                if (amt <= 0 || isNaN(amt)) {
+                    alert('올바른 숫자!');
+                    return;
+                }
+                
+                if (farmUser.length < amt) {
+                    alert('보유 길이 부족!');
+                    return;
+                }
+                
+                if (target.length < amt) {
+                    alert('상대방 길이 부족!');
+                    return;
+                }
+                
+                db.ref('pvpRequests').push({
+                    fromId: farmUser.id,
+                    fromName: farmUser.nickname,
+                    toId: target.id,
+                    toName: target.nickname,
+                    amount: amt,
+                    status: 'pending',
+                    timestamp: Date.now()
+                });
+                
+                setPvpTarget('');
+                setPvpAmount('');
+                alert('PVP 신청 완료!');
+            };
+
+            // PVP 수락
+            const acceptPvp = (req) => {
+                if (!farmUser) return;
+                
+                const win = Math.random() > 0.5;
+                const winnerId = win ? farmUser.id : req.fromId;
+                const loserId = win ? req.fromId : farmUser.id;
+                
+                const winner = allUsers.find(u => u.id === winnerId);
+                const loser = allUsers.find(u => u.id === loserId);
+                
+                if (!winner || !loser) return;
+                
+                const updates = {};
+                updates[`farmUsers/${winnerId}/length`] = winner.length + req.amount;
+                updates[`farmUsers/${loserId}/length`] = Math.max(0, loser.length - req.amount);
+                updates[`pvpRequests/${req.id}/status`] = 'completed';
+                
+                db.ref().update(updates);
+                
+                db.ref('chatMessages').push({
+                    nickname: '⚔️ PVP 시스템',
+                    message: `${winner.nickname}님이 ${loser.nickname}님을 이김! ${req.amount}cm 획득!`,
+                    timestamp: Date.now()
+                });
+                
+                setPvpResult({
+                    winner: winner.nickname,
+                    loser: loser.nickname,
+                    amount: req.amount,
+                    isWin: winnerId === farmUser.id
+                });
+                
+                setTimeout(() => setPvpResult(null), 5000);
+            };
+
+            // PVP 거절
+            const rejectPvp = (reqId) => {
+                db.ref(`pvpRequests/${reqId}`).update({ status: 'rejected' });
+            };
+
+            return (
+                <div className="container">
+                    <div className="header">
+                        <h1>🌶️ 커뮤니티 사이트</h1>
+                    </div>
+                    
+                    <div className="tabs">
+                        <button className={`tab ${tab==='board'?'active':''}`} onClick={()=>setTab('board')}>
+                            📝 게시판
+                        </button>
+                        <button className={`tab ${tab==='chat'?'active':''}`} onClick={()=>setTab('chat')}>
+                            💬 채팅
+                        </button>
+                        <button className={`tab ${tab==='farm'?'active':''}`} onClick={()=>setTab('farm')}>
+                            🌶️ 고추농장
+                        </button>
+                    </div>
+                    
+                    {tab === 'board' && (
+                        <div>
+                            <div className="card">
+                                <h3 style={{marginBottom: '15px'}}>게시글 작성</h3>
+                                <input 
+                                    type="text"
+                                    placeholder="제목"
+                                    value={postTitle}
+                                    onChange={e=>setPostTitle(e.target.value)}
+                                />
+                                <textarea 
+                                    placeholder="내용"
+                                    value={postContent}
+                                    onChange={e=>setPostContent(e.target.value)}
+                                />
+                                <button className="btn" onClick={writePost}>
+                                    📝 작성하기
+                                </button>
+                            </div>
+                            
+                            {posts.length === 0 ? (
+                                <div className="card" style={{textAlign: 'center', padding: '40px', color: '#999'}}>
+                                    아직 게시글이 없습니다
+                                </div>
+                            ) : (
+                                posts.map(post => (
+                                    <div key={post.id} className="post">
+                                        <div className="post-header">
+                                            <span>{new Date(post.timestamp).toLocaleString('ko-KR')}</span>
+                                        </div>
+                                        <h3 style={{marginBottom: '10px', fontSize: '1.3rem'}}>{post.title}</h3>
+                                        <p style={{whiteSpace: 'pre-wrap', lineHeight: '1.6'}}>{post.content}</p>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+                    
+                    {tab === 'chat' && (
+                        <div>
+                            <div className="card" style={{
+                                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                color: 'white'
+                            }}>
+                                <h3 style={{marginBottom: '10px'}}>💬 실시간 채팅</h3>
+                                <p style={{fontSize: '1.1rem'}}>당신의 닉네임: <strong>{chatNick} 🎲</strong></p>
+                                <p style={{fontSize: '0.9rem', opacity: 0.9, marginTop: '5px'}}>
+                                    (자동 배정, 변경 불가)
+                                </p>
+                            </div>
+                            
+                            <div className="chat-container">
+                                {messages.length === 0 ? (
+                                    <div style={{textAlign: 'center', padding: '40px', color: '#999'}}>
+                                        첫 메시지를 보내보세요!
+                                    </div>
+                                ) : (
+                                    messages.map(msg => (
+                                        <div key={msg.id} className="chat-message">
+                                            <div className="chat-header">
+                                                {msg.nickname} · {new Date(msg.timestamp).toLocaleTimeString('ko-KR')}
+                                            </div>
+                                            <div style={{fontSize: '1rem', lineHeight: '1.5'}}>
+                                                {msg.message}
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                            
+                            <div style={{display: 'flex', gap: '10px'}}>
+                                <input 
+                                    type="text"
+                                    placeholder="메시지 입력"
+                                    value={chatMsg}
+                                    onChange={e=>setChatMsg(e.target.value)}
+                                    onKeyPress={e=>e.key==='Enter'&&sendChat()}
+                                    style={{marginBottom: 0}}
+                                />
+                                <button 
+                                    className="btn"
+                                    onClick={sendChat}
+                                    style={{width: 'auto', padding: '12px 30px'}}
+                                >
+                                    전송
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {tab === 'farm' && (
+                        <div>
+                            {!farmUser ? (
+                                <div className="card" style={{maxWidth: '500px', margin: '0 auto'}}>
+                                    <h2 style={{textAlign: 'center', marginBottom: '20px'}}>
+                                        🌶️ 고추농장 {isLogin ? '로그인' : '회원가입'}
+                                    </h2>
+                                    
+                                    <input 
+                                        type="text"
+                                        placeholder="닉네임"
+                                        value={farmNick}
+                                        onChange={e=>setFarmNick(e.target.value)}
+                                    />
+                                    
+                                    <input 
+                                        type="password"
+                                        placeholder="비밀번호 (4자 이상)"
+                                        value={farmPass}
+                                        onChange={e=>setFarmPass(e.target.value)}
+                                        onKeyPress={e=>e.key==='Enter'&&(isLogin?login():register())}
+                                    />
+                                    
+                                    <button 
+                                        className="btn"
+                                        onClick={isLogin ? login : register}
+                                        disabled={!farmNick.trim() || !farmPass.trim()}
+                                    >
+                                        {isLogin ? '🚪 로그인' : '🌱 회원가입'}
+                                    </button>
+                                    
+                                    <div style={{textAlign: 'center', marginTop: '15px'}}>
+                                        <button
+                                            onClick={()=>{
+                                                setIsLogin(!isLogin);
+                                                setFarmNick('');
+                                                setFarmPass('');
+                                            }}
+                                            style={{
+                                                background: 'none',
+                                                border: 'none',
+                                                color: '#4a90e2',
+                                                cursor: 'pointer',
+                                                textDecoration: 'underline',
+                                                fontSize: '1rem'
+                                            }}
+                                        >
+                                            {isLogin ? '회원가입하기' : '로그인하기'}
+                                        </button>
+                                    </div>
+                                    
+                                    <p style={{
+                                        textAlign: 'center',
+                                        color: '#666',
+                                        marginTop: '20px',
+                                        fontSize: '0.9rem',
+                                        lineHeight: '1.6'
+                                    }}>
+                                        * 닉네임 중복 불가<br/>
+                                        * 비밀번호는 4자 이상
+                                    </p>
+                                </div>
+                            ) : (
+                                <div>
+                                    {pvpResult && (
+                                        <div className={`pvp-result ${pvpResult.isWin ? 'win' : 'lose'}`}>
+                                            <h2 style={{fontSize: '2.5rem', marginBottom: '15px'}}>
+                                                {pvpResult.isWin ? '🎉 승리!' : '😢 패배...'}
+                                            </h2>
+                                            <p style={{fontSize: '1.3rem', fontWeight: 'bold'}}>
+                                                {pvpResult.winner} vs {pvpResult.loser}
+                                            </p>
+                                            <p style={{fontSize: '1.1rem', marginTop: '10px'}}>
+                                                {pvpResult.amount}cm 이동!
+                                            </p>
+                                        </div>
+                                    )}
+                                    
+                                    <div className="card" style={{
+                                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                        color: 'white'
+                                    }}>
+                                        <div style={{
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'center',
+                                            marginBottom: '20px'
+                                        }}>
+                                            <h2 style={{fontSize: '1.8rem'}}>{farmUser.nickname}님의 농장</h2>
+                                            <button
+                                                onClick={logout}
+                                                style={{
+                                                    background: 'rgba(255,255,255,0.2)',
+                                                    border: '1px solid white',
+                                                    color: 'white',
+                                                    padding: '8px 20px',
+                                                    borderRadius: '20px',
+                                                    cursor: 'pointer',
+                                                    fontSize: '0.9rem'
+                                                }}
+                                            >
+                                                🚪 로그아웃
+                                            </button>
+                                        </div>
+                                        
+                                        <div style={{fontSize: '4rem', textAlign: 'center', margin: '20px 0'}}>
+                                            🌶️
+                                        </div>
+                                        
+                                        <div style={{
+                                            fontSize: '3rem',
+                                            fontWeight: 'bold',
+                                            textAlign: 'center',
+                                            marginBottom: '20px'
+                                        }}>
+                                            {farmUser.length}cm
+                                        </div>
+                                        
+                                        <div style={{
+                                            background: 'rgba(255,255,255,0.2)',
+                                            padding: '20px',
+                                            borderRadius: '12px',
+                                            textAlign: 'center',
+                                            marginBottom: '20px'
+                                        }}>
+                                            <div style={{fontSize: '1.5rem', fontWeight: 'bold'}}>
+                                                ⏰ {timer}
+                                            </div>
+                                        </div>
+                                        
+                                        <button
+                                            className="btn"
+                                            onClick={checkIn}
+                                            disabled={timer !== '출석 가능!'}
+                                            style={{
+                                                background: timer === '출석 가능!' ? 'white' : 'rgba(255,255,255,0.3)',
+                                                color: timer === '출석 가능!' ? '#667eea' : 'rgba(255,255,255,0.7)',
+                                                cursor: timer === '출석 가능!' ? 'pointer' : 'not-allowed'
+                                            }}
+                                        >
+                                            ⭐ 출석체크 (1~100cm)
+                                        </button>
+                                    </div>
+                                    
+                                    {pvpReqs.length > 0 && (
+                                        <div className="card">
+                                            <h3 style={{marginBottom: '15px'}}>⚔️ PVP 요청</h3>
+                                            {pvpReqs.map(req => {
+                                                const isReceived = req.toId === farmUser.id;
+                                                return (
+                                                    <div key={req.id} style={{
+                                                        padding: '15px',
+                                                        background: '#f8f9fa',
+                                                        borderRadius: '8px',
+                                                        marginBottom: '10px'
+                                                    }}>
+                                                        {isReceived ? (
+                                                            <>
+                                                                <div style={{marginBottom: '10px', fontWeight: 'bold'}}>
+                                                                    {req.fromName}님이 {req.amount}cm를 걸고 도전!
+                                                                </div>
+                                                                <div style={{display: 'flex', gap: '10px'}}>
+                                                                    <button
+                                                                        className="btn"
+                                                                        onClick={()=>acceptPvp(req)}
+                                                                        style={{
+                                                                            flex: 1,
+                                                                            background: 'linear-gradient(135deg, #4caf50 0%, #66bb6a 100%)'
+                                                                        }}
+                                                                    >
+                                                                        ✅ 수락
+                                                                    </button>
+                                                                    <button
+                                                                        className="btn"
+                                                                        onClick={()=>rejectPvp(req.id)}
+                                                                        style={{
+                                                                            flex: 1,
+                                                                            background: 'linear-gradient(135deg, #f44336 0%, #ef5350 100%)'
+                                                                        }}
+                                                                    >
+                                                                        ❌ 거절
+                                                                    </button>
+                                                                </div>
+                                                            </>
+                                                        ) : (
+                                                            <div style={{color: '#666'}}>
+                                                                {req.toName}님에게 {req.amount}cm 도전 대기 중...
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                    
+                                    <div className="card">
+                                        <h3 style={{marginBottom: '15px'}}>⚔️ PVP 도전하기</h3>
+                                        <input 
+                                            type="text"
+                                            placeholder="상대방 닉네임"
+                                            value={pvpTarget}
+                                            onChange={e=>setPvpTarget(e.target.value)}
+                                        />
+                                        <input 
+                                            type="number"
+                                            placeholder="걸 cm (숫자)"
+                                            value={pvpAmount}
+                                            onChange={e=>setPvpAmount(e.target.value)}
+                                            min="1"
+                                        />
+                                        <button
+                                            className="btn"
+                                            onClick={sendPvp}
+                                            disabled={!pvpTarget.trim() || !pvpAmount}
+                                        >
+                                            ⚔️ PVP 신청
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="card">
+                                        <h3 style={{marginBottom: '15px'}}>🏆 랭킹</h3>
+                                        {allUsers.length === 0 ? (
+                                            <div style={{textAlign: 'center', padding: '40px', color: '#999'}}>
+                                                아직 참가자가 없습니다
+                                            </div>
+                                        ) : (
+                                            allUsers.map((user, idx) => (
+                                                <div
+                                                    key={user.id}
+                                                    style={{
+                                                        padding: '15px',
+                                                        background: user.id === farmUser.id ? '#e3f2fd' : '#f8f9fa',
+                                                        borderRadius: '8px',
+                                                        marginBottom: '10px',
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        alignItems: 'center',
+                                                        border: user.id === farmUser.id ? '2px solid #2196f3' : 'none'
+                                                    }}
+                                                >
+                                                    <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                                                        <span style={{
+                                                            fontSize: '1.5rem',
+                                                            fontWeight: 'bold',
+                                                            color: idx === 0 ? '#ffd700' : idx === 1 ? '#c0c0c0' : idx === 2 ? '#cd7f32' : '#999'
+                                                        }}>
+                                                            {idx + 1}
+                                                        </span>
+                                                        <span style={{fontWeight: 'bold', fontSize: '1.1rem'}}>
+                                                            {user.nickname}
+                                                        </span>
+                                                        {user.id === farmUser.id && (
+                                                            <span style={{
+                                                                background: '#2196f3',
+                                                                color: 'white',
+                                                                padding: '2px 10px',
+                                                                borderRadius: '12px',
+                                                                fontSize: '0.8rem',
+                                                                fontWeight: 'bold'
+                                                            }}>
+                                                                나
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div style={{
+                                                        fontSize: '1.3rem',
+                                                        fontWeight: 'bold',
+                                                        color: '#4caf50'
+                                                    }}>
+                                                        🌶️ {user.length}cm
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
